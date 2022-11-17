@@ -1,0 +1,673 @@
+##############################################
+########### TCGA GEX and CLINICAL DATA #######
+##############################################
+
+
+# BiocManager::install("BioinformaticsFMRP/TCGAbiolinks", force = TRUE)
+
+library("TCGAbiolinks") # bioconductor package
+library(SummarizedExperiment) # for Coordinating Experimental Assays, Samples
+library(tidyverse)
+
+# Download GEX Data from TCGAbioloinks
+
+query_TCGA = GDCquery(
+     project = "TCGA-BRCA",
+     data.category = "Transcriptome Profiling", # parameter enforced by GDCquery
+     experimental.strategy = "RNA-Seq",
+     data.type = "Gene Expression Quantification",
+     workflow.type = "STAR - Counts")
+
+metadata = getResults(query_TCGA, Categorysummary$`Proteome Profiling` != FALSE, )
+
+GDCdownload(query = query_TCGA)
+
+data_expr <- GDCprepare(query_TCGA_fpkm,
+                        save = TRUE, 
+                        save.filename = "~/WorkingDirectory/TCGA_BRCA_expr.rda")
+
+# a step to remove sample outliers using pearson correlation
+
+rna_tpm <- as.data.frame(SummarizedExperiment::assay(data_expr, "tpm_unstrand"),
+                         cor.cut = 0.6,
+                         datatype = "STAR - Counts")
+
+#######################################  BATCH EFFECT CORRECTION ################################################
+
+# USe only log transformed TPM values for batch correction
+
+rna_tpm_log <- log2(rna_tpm + 0.1)
+
+
+#### Keep plates with at least 2 samples
+
+keep.plates <- names(which(table(get_IDs(rna_tpm_log)$plate) >2))
+keep.plates <- get_IDs(rna_tpm_log)$plate %in% keep.plates
+
+batch.corrected.adjusted.tpm <- TCGAbatch_Correction(tabDF =  rna_tpm_log[ , keep.plates], 
+                                                     batch.factor = "Plate", 
+                                                     adjustment=c("TSS", "Portion"),
+                                                     ClinicalDF = clinical_index_brca)
+# [1] A144 A10J A13Q A157 A28M A266 A034 A115 A12D A00Z A239 A12P A213 A169 A24H A137 A16F A29R A14D A084 A089 A36F A33J A109 A277 A14M A41B A056 A31O A180
+# [31] A32P A22U A22K A352 A18M A17B A22O A27Q A21T A19W
+# 40 Levels: A00Z A034 A056 A084 A089 A109 A10J A115 A12D A12P A137 A13Q A144 A14D A14M A157 A169 A16F A17B A180 A18M A19W A213 A21T A22K A22O A22U ... A41B
+# Found 23589 genes with uniform expression within a single batch (all zeros); these will not be adjusted for batch.
+# Found40batches
+# Adjusting for2covariate(s) or covariate level(s)
+# Standardizing Data across genes
+# Fitting L/S model and finding priors
+# Finding parametric adjustments
+# Adjusting the Data
+
+dim(batch.corrected.adjusted.tpm)
+
+###############################################################################
+
+######### VISAULIZE BATCH CORRECTED DATA IN PRINCE PLOT #######################
+
+###############################################################################
+
+
+#######  BEFORE BATCH CORRECTION
+
+rna_tpm_log_t <- t(rna_tpm_log)
+
+rna_tpm_df <- rna_tpm_log_t %>% as.data.frame() %>%
+     mutate(plate = as.factor(get_IDs(rna_tpm_log)$plate[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]),
+            tss = as.factor(get_IDs(rna_tpm_log)$tss[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]),
+            Year = as.factor(clinical_data_final_brca$year_of_diagnosis[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]),
+            ER = as.factor(clinical_data_final_brca$ER_status[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]),
+            HER2 = as.factor(clinical_data_final_brca$her2_status_final[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]),
+            vital_status = as.factor(clinical_data_final_brca$vital_status[match(substr(colnames(rna_tpm_log),1,12), data_expr$submitter_id)]))
+
+
+rna_tpm_mat <- as.matrix(rna_tpm_log)
+
+# make prince object
+
+res1<-prince(rna_tpm_mat,rna_tpm_fac,top=10,permute=TRUE)
+
+prince.plot(prince=res1)
+
+#######  AFTER BATCH CORRECTION
+
+batch.corrected.adjusted.tpm.t <- t(batch.corrected.adjusted.tpm)
+
+tpm_corrected_df <- batch.corrected.adjusted.tpm.t %>% as.data.frame() %>%
+     mutate(plate = as.factor(get_IDs(batch.corrected.adjusted.tpm)$plate[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]),
+            tss = as.factor(get_IDs(batch.corrected.adjusted.tpm)$tss[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]),
+            Year = as.factor(clinical_data_final_brca$year_of_diagnosis[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]),
+            ER = as.factor(clinical_data_final_brca$ER_status[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]),
+            HER2 = as.factor(clinical_data_final_brca$her2_status_final[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]),
+            vital_status = as.factor(clinical_data_final_brca$vital_status[match(substr(colnames(batch.corrected.adjusted.tpm),1,12), data_expr$submitter_id)]))
+
+tpm_corrected_fac <- tpm_corrected_df %>% dplyr::select(ER, HER2, vital_status, plate, tss, Year)
+
+batch.corrected.adjusted.tpm.mat <- as.matrix(batch.corrected.adjusted.tpm)
+
+# make prince object
+
+res.after<-prince(batch.corrected.adjusted.tpm.mat,tpm_corrected_fac,top=10,permute=TRUE)
+
+prince.plot(prince=res.after)
+
+
+
+#####################################################   TCGA CLINICAL DATA #############################################
+
+query.clin <- GDCquery(project = "TCGA-BRCA", 
+                       data.category = "Clinical",
+                       data.type = "Clinical Supplement", 
+                       data.format = "BCR Biotab")
+# Query, download & analyze - GDC                  
+# Version:2.25.3
+
+GDCdownload(query.clin)
+
+
+clinical_brca_bcrbio <- GDCprepare(query.clin)
+
+names(clinical_brca_bcrbio)
+
+## Clinical INDEXED Data
+
+clinical_index_brca <- GDCquery_clinic("TCGA-BRCA") 
+
+names(clinical_index_brca)
+
+# since number of patients are different in eacf df, we will merge the follow up data to create common coloumns
+
+# join all follow ups to keep recent or max events
+# new_tumor_event_type, new_tumor_event_site, new_tumor_event_site_other are the values corresponding to new_tumor_event_dx_days_to
+
+clinical_followup <- clinical_follow_up_v4.0_brca %>% 
+     left_join(clinical_follow_up_v1.5_brca, by = c("bcr_patient_uuid", "bcr_patient_barcode",  "bcr_followup_barcode", "bcr_followup_uuid"))  %>%
+     left_join(clinical_follow_up_v2.1_brca, by = c("bcr_patient_uuid", "bcr_patient_barcode",  "bcr_followup_barcode", "bcr_followup_uuid")) %>%
+     left_join(clinical_follow_up_v4.0_nte_brca, by = c("bcr_patient_uuid", "bcr_patient_barcode")) %>%
+     left_join(clinical_follow_up_nte_brca, by = c("bcr_patient_uuid", "bcr_patient_barcode")) %>% 
+     mutate(new_tumor_event_dx_days_to_final = pmax(new_tumor_event_dx_days_to_V1.5, new_tumor_event_dx_days_to_V2.1,
+                                                    new_tumor_event_dx_days_to_V4.0_nte, new_tumor_event_dx_days_to_V_nte, na.rm = T),
+            new_tumor_event_type_final = coalesce(new_tumor_event_type_V2.1, new_tumor_event_type_V4.0_nte, new_tumor_event_type_V_nte,),
+            new_tumor_event_site_final = coalesce(new_tumor_event_site_V2.1, new_tumor_event_site_V4.0_nte, new_tumor_event_site_V_nte, 
+                                                  new_tumor_event_site_other_V2.1, new_tumor_event_site_other_V4.0_nte, new_tumor_event_site_other_V_nte)) %>%
+     distinct(bcr_patient_barcode, .keep_all = T) %>%  as_tibble() 
+
+# join all data frame together - patient, index follow ups - all 5 follow ups
+
+clinical_patient_followup_index <- clinical_patient %>% left_join(clinical_index, by = ('bcr_patient_barcode') )  %>% 
+     left_join(clinical_followup, by = c('bcr_patient_uuid', 'bcr_patient_barcode')) %>%
+     mutate(tumor_status_final = coalesce(tumor_status_patient, tumor_status_V1.5, tumor_status_V2.1, tumor_status_V4.0)) %>%
+     # mutate all [Not Available] to NA to better filter PFI later
+     mutate_at(vars(new_tumor_event_dx_days_to_final), na_if, "[Not Available]")
+
+
+clinical_treatment_data <- clinical_brca_bcrbio$clinical_drug_brca %>% 
+     dplyr::select(bcr_patient_uuid, bcr_patient_barcode,
+                   pharmaceutical_therapy_type, pharmaceutical_therapy_drug_name, therapy_regimen) %>%
+     mutate(treat_code = case_when(
+          pharmaceutical_therapy_type == "Hormone Therapy" ~ "HT",
+          pharmaceutical_therapy_type == "Chemotherapy" ~ "Chemo",
+          str_detect(pharmaceutical_therapy_type, "Hormone Therapy") ~ "HT + any", 
+          str_detect(pharmaceutical_therapy_type, "Chemotherapy") ~ "Chemo + any", 
+          stringi::stri_detect_regex(pharmaceutical_therapy_type, "[Not Available]") ~ "NA",
+          TRUE ~ pharmaceutical_therapy_type),
+          # give readable nice names to Endocrine Therapy drugs
+          Tamoxifen = ifelse(pharmaceutical_therapy_drug_name %in% 
+                                  c("Tamoxifen", "doxorubicine cyclophosphamide tamoxifen", "doxorubicine+cyclophosphamide+tamoxifen", "nolvadex", "Nolvadex", "tamoxifen", "Tamoxifen", "TAMOXIFEN", "TAMOXIFEN (NOVADEX)", "tamoxifen citrate", "tamoxiphen+anastrazolum", "tamoxiphene", "tamoxiphene+anastrozolum", "tamoxiphene+leuporeline+gosereline"), 1, 0),
+          AI = ifelse(pharmaceutical_therapy_drug_name %in% 
+                           c("Anastrazole", "Anastrozole", "ANASTROZOLE", "ANASTROZOLE (ARIMIDEX)", "anastrozolum", "arimidex", "Arimidex", "ARIMIDEX", "Arimidex (Anastrozole)", "ARIMIDEX (ANASTROZOLE)", "aromasin", "Aromasin", "Aromasin (Exemestane)", "AROMASIN (EXEMESTANE)", "aromatase exemestane", "Exemestane", "EXEMESTANE", "EXEMESTANE (AROMASIN)", "femara", "Femara", "FEMARA", "Femara (Letrozole)", "Letrozol", "letrozole", "Letrozole", "LETROZOLE", "Letrozole (Femara)", "letrozolum", "tamoxiphen+anastrazolum", "tamoxiphene+anastrozolum"), 1, 0),
+          Fulvestrant = ifelse(pharmaceutical_therapy_drug_name %in% 
+                                    c("faslodex", "Faslodex", "Fulvestrant", "FULVESTRANT", "Fulvestrant (Faslodex)"), 1, 0),
+          OtherEndo = ifelse(pharmaceutical_therapy_drug_name %in% 
+                                  c("Goserelin","Leuprolide","LEUPROLIDE ACETATE (LUPRON)", "Leuprorelin", "Lupron", "LUPRON", "tamoxiphene+leuporeline+gosereline", "triptorelin", "Triptorelin", "Zoladex", "Megace"),1,0),
+          Tam_AI = ifelse(pharmaceutical_therapy_drug_name %in% 
+                               c("tamoxiphen+anastrazolum", "tamoxiphene+anastrozolum"),1,0),
+          Endo_treat = ifelse(Tamoxifen == 1 | AI == 1 | Fulvestrant== 1 | OtherEndo ==1 | Tam_AI ==1, 1, 0),
+          antiHER2 = ifelse(pharmaceutical_therapy_drug_name %in% 
+                                 c("Trastuzumab",	"herceptin",	"Herceptin",	"HERCEPTIN",	
+                                   "taxol+adriamycin+cyclophosphamide+herceptin",	"TCH",	"trastuzumab",	
+                                   "Trastuzumab",	"TRASTUZUMAB",	"Trustuzumab", "lapatinib",	"Lapatinib"), 1, 0),
+          Chemo = ifelse(str_detect(treat_code, "Chemo"), 1, 0)
+     ) %>%
+     group_by(bcr_patient_barcode) %>%
+     mutate(Response = if(any(Endo_treat == 1 | antiHER2 == 1 | Chemo ==1)) 1 else 0) %>%
+     distinct(bcr_patient_barcode, .keep_all = T) 
+# %>% 
+#{print(dim(.))} # [1] 782  15
+
+# filter out each row that contains maximum information on multiple treatment columns
+
+clinical_treatment_data <- clinical_treatment_data %>%
+     group_by(bcr_patient_barcode) %>%
+     rowwise() %>%
+     mutate(Max = sum(Tamoxifen, AI, Fulvestrant, OtherEndo, Tam_AI, Endo_treat, antiHER2, Chemo, Response)) %>%
+     #filter(Max == max(Max)) %>%
+     arrange(bcr_patient_barcode, desc(Max)) %>%
+     dplyr::select(-Max) %>%
+     distinct(bcr_patient_barcode, .keep_all = T)
+
+
+clinical_endpoint_brca <- clinical_patient_followup_index %>% 
+     mutate(deceased = vital_status == 'Dead',
+            alive = vital_status == 'Alive',
+            # create an "overall survival" 'variable that is equal to days_to_death
+            # for dead patients, and to days_to_last_follow_up for patients who
+            # are still alive
+            OS_days = as.integer(ifelse(deceased,
+                                        days_to_death, days_to_last_follow_up)),
+            OS_years = round(OS_days/365.25, 1),
+            OS_event = case_when(vital_status == 'Alive' ~ 0, 
+                                 vital_status == 'Dead' ~ 1),
+            # take only recurrrence cases and NOT Primary tumor event and [NOT AVAILABLE] days
+            recurrence_date = dplyr::case_when(
+                 new_tumor_event_type_final == 'Distant Metastasis' ~ pmin(new_tumor_event_dx_days_to_final, na.rm=TRUE),
+                 new_tumor_event_type_final == 'Locoregional Recurrence'~ pmin(new_tumor_event_dx_days_to_final, na.rm=TRUE)
+            ),
+            PFI_days = ifelse(!is.na(recurrence_date), pmin(recurrence_date,days_to_death, na.rm=TRUE), OS_days),
+            PFI_event = case_when(!is.na(recurrence_date) ~ 1,
+                                  !is.na(PFI_days) ~ 0),
+            PFS_event = if_else(OS_event == 1, 1, PFI_event),
+            PFS_days = ifelse(PFS_event == 1 & OS_event == 1, pmin(PFI_days, OS_days), OS_days),
+            PFS_years = round(as.numeric(PFS_days)/365.25, 1))
+
+
+names(clinical_endpoint_brca)
+
+# Load gene expression plus PAM 50 data to join with clinical data
+
+load("~WorkingDirectory/brca_tpm_matrix.Rdata")
+
+
+clinical_data_final_brca <-  brca_tpm_matrix %>% 
+     left_join(clinical_endpoint_brca, by = "bcr_patient_barcode") %>% 
+     left_join(clinical_treatment_data, by = c("bcr_patient_barcode", "bcr_patient_uuid"))
+
+dim(clinical_data_final_brca)
+
+clinical_data_final_brca <- clinical_data_final_brca %>%
+                              mutate(ER_status = factor(case_when(er_status_by_ihc == "Positive" ~ "pos",
+                                         er_status_by_ihc == "Negative" ~ "neg"), 
+                                         levels = c("pos", "neg")), 
+                                   Subtype = factor(PAM50, levels = c('LumA', 'LumB', 'Her2', 'Basal', 'Normal')))
+
+## SAVE ALL RELEVANT FILES
+
+
+###############################
+#######  TCGA survival  #######
+###############################
+
+ls <- c("dplyr", "ggplot2", "survival", "Hmisc", "RColorBrewer")
+lapply(ls, require, character.only = TRUE)
+
+
+## TCGA data from files
+
+s <- read.delim(file="TCGA_BRCA_batch_corrected_adjusted_combat_plates_TPM.csv", comment.char = "#", header=T, sep=",", row.names = 1)
+clin <- read.delim(file="TCGA_BRCA_clinical_final.csv", comment.char = "#", header=T, sep=",")
+
+
+## Retrieve CITED genes expression data from expression matrix
+CID <- c("ENSG00000125931", "ENSG00000164442", "ENSG00000179862") ## All 3 CITEDs
+cited <- t(s[CID,])
+cited <- as.data.frame(cited)
+
+##Merge expression data with clin data
+cited$p_id <- substr(row.names(cited), 1, 12)
+cited <- cited[order(row.names(cited)),]
+cited <- cited %>% distinct(p_id, .keep_all = TRUE) ## Remove duplicates
+
+clin$p_id <- paste0("TCGA", ".", substr(clin$bcr_patient_barcode, 6, 7), ".", substr(clin$bcr_patient_barcode, 9, 12))
+clin <- subset(clin, clin$Gender == "female" & clin$Tumor_type=="TP")
+clin <- clin %>% distinct(p_id, .keep_all = TRUE) ## Remove duplicates
+
+mc <- merge(cited, clin, by="p_id")
+
+
+## Log2 TPM expression values for CITED1
+mc$CITED1 <- mc$ENSG00000125931.11
+
+
+## Kaplan Meier plotting function
+
+# get the log rank p value
+logrank.p <- function(s, grp, max.time=NA, round=3) {
+  grp <- droplevels(grp)
+  
+  if (!(is.na(max.time))) {
+    s[which(s[, 1] > max.time), 1] <- max.time
+  }
+  
+  if (length(levels(grp)) > 1) {
+    survtest = survdiff(s ~ grp, rho=0)
+    p.value = 1 - pchisq(survtest$chisq, length(levels(grp)) - 1)
+    #p.value = round(p.value, round) 
+    p.value = sprintf("%.3f", signif(p.value, round)) ## Chose no of significant figures in place of decimals
+  } else {
+    p.value = NA
+  }
+  return(p.value)
+}
+
+plot.survival <- function(s, grp, lty=1, title="", save="", cex=0.7, risk.table=T, marks=T, custom.text="", yaxislabel="Probability of survival", ...) {
+  # if there's no data simply return
+  if (identical(as.numeric(s), numeric(0))) {
+    print(paste("No plot:", save))
+    return()
+  }
+  
+  if (save != "")
+    pdf(save,
+        paper="a4",
+        useDingbats=F
+    )
+  
+  grp <- droplevels(grp)
+  
+  colset <- c("#FF7F00", "#ADD8E6", "#377EB8")
+  if (length(grp) == 1)
+    colset <- colset[2]
+  
+  fit <- survfit(formula=s ~ grp)
+  
+  xlim.max <- ceiling(max(s[, "time"]))
+  x.axis.ticks=seq(0, xlim.max, 2)
+  
+  plot(fit,
+       col=colset,
+       conf.int=F,
+       lwd=2,
+       las=1,
+       bty="n",
+       xaxt="n",
+       xlab="Time after diagnosis (years)",
+       ylab=yaxislabel,
+       mark="|",
+       yaxs="r",
+       #yaxs="i",
+       cex=0.75,  # to make the size of the mark sign match that of the default "+"
+       mark.time=marks,
+       font.main=4,
+       ...
+  )
+  axis(side=1, at=x.axis.ticks)
+  fit.table <- summary(fit)$table
+  
+  legend(
+    "bottomleft",
+    legend=paste0(gsub(".+=(.+)", "\\1", levels(grp))), ## Simple legend
+    col=colset,
+    lty=1,
+    horiz=FALSE,
+    bty="n",
+    cex=0.8,
+    ...
+  )
+  title(main=title, ...)
+  
+  # log-rank p
+  p.value <- logrank.p(s, grp, max.time = NA)
+  if (is.na(p.value)) {
+    p.value <- "NaN"
+  }
+  
+  
+  # p-value inside the plot region
+  text(x=3.5,
+       y=0.2,
+       labels=paste0("p = ", p.value, " (logrank test)"
+       ),
+       cex=cex*1.3,
+       ...)
+
+  if (custom.text != "")
+    text(x=4.5,
+         y=0.4,
+         labels=custom.text,
+         cex=cex*1.5,
+         ...)
+  
+  
+  #########################
+  #
+  # Risk Table
+  #
+  #########################
+  if (isTRUE(risk.table)) {
+    times = x.axis.ticks
+    sum.survfit = summary(fit, times=times)
+    
+    #
+    time = sum.survfit$time
+    n.risk = sum.survfit$n.risk
+    strata = sum.survfit$strata
+    
+    v.offset = -0.35 
+    left.text.pos = -axTicks(1)[length(axTicks(1))]/2.5
+    text(left.text.pos, v.offset, "No. at risk", adj=c(0, 0.5), cex=1)
+   
+     for (stratum in levels(strata)) {
+      v.offset = v.offset - 0.05
+      text.stratum = strsplit(stratum, "=")[[1]][2]
+      text.stratum <- capitalize(text.stratum) 
+      text(left.text.pos, v.offset, text.stratum, adj=c(0, 0.5), cex=0.9) ## No at risk table properties
+      i = (strata == stratum)
+      text(time[i], v.offset, labels=prettyNum(n.risk[i]), cex=0.9)
+    }
+  }
+  
+  if (save != "")
+    dev.off()
+}
+
+
+## function for CITED1 expression groups:
+expr2 <- function(x){
+    x$CITED1expr <- ifelse(ntile(x$CITED1, 2)==2, "CITED1 high", ifelse(ntile(x$CITED1, 2)==1,  "CITED1 low",  "NA"))
+  x$CITED1expr <- factor(x$CITED1expr, levels=c("CITED1 high",  "CITED1 low"))
+  return(x)
+}
+
+
+### TCGA KM plots
+
+pdf("RelativeCITED1_survivalTCGA221111.pdf")
+par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
+    mar=c(4, 4, 4, 2),
+    xpd=NA
+)
+
+## Figure 2 c
+## Endo-treated ER+/LN-
+## RFS
+x <- subset(mc, !is.na(mc$PFS_years) &  mc$Endo==1 & mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
+x <- expr2(x)
+plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; RFS: AE-treated tumours ER+/LN-: CITED1",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
+
+
+## Figure 2 d
+## AI-treated/ER+/LN-
+## RFS
+x <- subset(mc, !is.na(mc$PFS_years) & mc$AI==1& mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
+x <- expr2(x)
+plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; RFS:AI-treated tumours ER+/LN-: CITED1",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
+
+
+## Supplemental figure e
+## Tam-treated
+## RFS
+x <- subset(mc, !is.na(mc$PFS_years) & mc$Tamoxifen==1)
+x <- expr2(x)
+plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; Tam-treated: Gene CITED1 ",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
+
+## Supplemental figure f
+## Tam ER+/LN-
+## RFS
+x <- subset(mc, !is.na(mc$PFS_years) &  mc$Tamoxifen==1 & mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
+x <- expr2(x)
+plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; Tam-treated ER+/LN-: Gene CITED1", yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
+
+dev.off()
+
+
+##############################################
+########### TMA dataset survival #############
+##############################################
+
+### CITED1 and survival in TMA dataset
+
+df <- read.delim(file="TMAcohortCITED1.tab", sep="\t", row.names = F)
+
+
+## Kaplan Meier plotting script 
+library(Hmisc)
+library(survival)
+library(RColorBrewer)
+my.colorbrewer.set1 <- brewer.pal(9, "Set1")[c(2,1,3:5,7:9)]
+# get the log rank p value
+logrank.p <- function(s, grp, max.time=NA, round=3) {
+  grp <- droplevels(grp)
+  
+  if (!(is.na(max.time))) {
+    s[which(s[, 1] > max.time), 1] <- max.time
+  }
+  
+  if (length(levels(grp)) > 1) {
+    survtest = survdiff(s ~ grp, rho=0)
+    p.value = 1 - pchisq(survtest$chisq, length(levels(grp)) - 1)
+    p.value = sprintf("%.3f", signif(p.value, round)) ## Chose no of significant figures in place of decimals
+  } else {
+    p.value = NA
+  }
+  return(p.value)
+}
+
+plot.survival <- function(s, grp, lty=1, title="", save="", cex=0.7, risk.table=T, marks=T, custom.text="", yaxislabel="Probability of survival", ...) {
+  # if there's no data simply return
+  if (identical(as.numeric(s), numeric(0))) {
+    print(paste("No plot:", save))
+    return()
+  }
+  
+  if (save != "")
+    pdf(save,
+        paper="a4",
+        useDingbats=F
+    )
+  
+  grp <- droplevels(grp)
+  
+  colset1 <- brewer.pal(9, "Set1")[c(5,2,1,3:4,7:9)] 
+  colset <- colset1
+  if (length(grp) == 1)
+    colset <- colset[2]
+  
+  fit <- survfit(formula=s ~ grp)
+  
+  xlim.max <- ceiling(max(s[, "time"]))
+  x.axis.ticks=seq(0, xlim.max, 2)
+  
+  plot(fit,
+       col=colset,
+       conf.int=F,
+       lwd=2,
+       las=1,
+       bty="n",
+       xaxt="n",
+       xlab="Time after diagnosis (years)",
+       ylab=yaxislabel,
+       mark="|",
+       yaxs="r",
+       #yaxs="i",
+       cex=0.75,  # to make the size of the mark sign match that of the default "+"
+       mark.time=marks,
+       font.main=4,
+       ...
+  )
+  axis(side=1, at=x.axis.ticks)
+  
+  legend(
+    "bottomleft",
+    legend=paste0(gsub(".+=(.+)", "\\1", levels(grp))), ## Simple legend
+    col=colset,
+    lty=1,
+    horiz=FALSE,
+    bty="n",
+    cex=0.8,
+    ...
+  )
+  title(main=title, ...)
+  
+  # log-rank p
+  p.value <- logrank.p(s, grp, max.time = NA)
+  if (is.na(p.value)) {
+    p.value <- "NaN"
+  }
+  
+  # p-value inside the plot region
+  text(x=3.5,
+       y=0.2,
+       labels=paste0("p = ", p.value, " (logrank test)"
+       ),
+       cex=cex*1.3,
+       ...)
+  
+  
+  if (custom.text != "")
+    text(x=4.5,
+         y=0.4,
+         labels=custom.text,
+         cex=cex*1.5,
+         ...)
+  
+  
+  #########################
+  #
+  # Risk Table
+  #
+  #########################
+  if (isTRUE(risk.table)) {
+    times = x.axis.ticks
+    sum.survfit = summary(fit, times=times)
+    
+    #
+    time = sum.survfit$time
+    n.risk = sum.survfit$n.risk
+    strata = sum.survfit$strata
+    
+    v.offset = -0.35 
+    left.text.pos = -axTicks(1)[length(axTicks(1))]/2.5
+    text(left.text.pos, v.offset, "No. at risk", adj=c(0, 0.5), cex=1)
+    #
+    for (stratum in levels(strata)) {
+      v.offset = v.offset - 0.05
+      text.stratum = strsplit(stratum, "=")[[1]][2]
+      text.stratum <- capitalize(text.stratum) 
+      text(left.text.pos, v.offset, text.stratum, adj=c(0, 0.5), cex=0.9) ## No at risk table properties
+      i = (strata == stratum)
+      text(time[i], v.offset, labels=prettyNum(n.risk[i]), cex=0.9)
+    }
+  }
+  
+  if (save != "")
+    dev.off()
+}
+
+
+##### FIGURES #####
+
+### Figure 2a: TAM, ER+, RFS
+pdf("CITED1Figure2a_221111.pdf", family="ArialMT")
+par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
+    mar=c(4, 4, 4, 2),
+    xpd=NA
+)
+
+x <- subset(df, !is.na(df$RFS_years) & df$RFS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$typeendo==1)
+plot.survival(Surv(x$RFS_years, x$RFS_event), as.factor(x$CITED1_ScoreGroup), title="Tamoxifen-treated, ER-positive tumors
+RFS",yaxislabel= "Cumulative freedom from relapse", risk.table=T, lty=12)
+
+dev.off()
+
+
+### Figure 2b: TAM, ER+, BCSS
+pdf("CITED1Figure2b_221111.pdf", family="ArialMT")
+par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
+    mar=c(4, 4, 4, 2),
+    #par(oma=c(2.5, 2, 1, 1),  # outer margins
+    xpd=NA
+)
+
+x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$typeendo==1)
+plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Tamoxifen-treated, ER-positive tumors
+BCSS",yaxislabel= "Cumulative survival", risk.table=T, lty=12)
+
+dev.off()
+
+
+### Supplemental figure 1c
+pdf("CITED1SuppFigure1c_221111.pdf", family="ArialMT")
+par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
+    mar=c(4, 4, 4, 2),
+    #par(oma=c(2.5, 2, 1, 1),  # outer margins
+    xpd=NA
+)
+x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$endothe == 0)
+plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Untreated tumors (no tamoxifen)
+BCSS", yaxislabel= "Cumulative survival", risk.table=T, lty=12)
+dev.off()
+
+
+### Supplemental figure 1d
+pdf("CITED1SuppFigure1d_221111.pdf", family="ArialMT")
+par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
+    mar=c(4, 4, 4, 2),
+    #par(oma=c(2.5, 2, 1, 1),  # outer margins
+    xpd=NA
+)
+x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$nodstat2==0 & df$typeendo==1)
+plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Untreated tumors (no tamoxifen)
+BCSS", yaxislabel= "Cumulative survival", risk.table=T, lty=12)
+dev.off()
+
+
