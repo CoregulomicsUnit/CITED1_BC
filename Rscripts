@@ -263,16 +263,18 @@ lapply(ls, require, character.only = TRUE)
 
 ## TCGA data from files
 
-s <- read.delim(file="TCGA_BRCA_batch_corrected_adjusted_combat_plates_TPM.csv", comment.char = "#", header=T, sep=",", row.names = 1)
-clin <- read.delim(file="TCGA_BRCA_clinical_final.csv", comment.char = "#", header=T, sep=",")
+s <- batch.corrected.adjusted.tpm
+clin <- clinical_data_final_brca
 
 
 ## Retrieve CITED genes expression data from expression matrix
+
 CID <- c("ENSG00000125931", "ENSG00000164442", "ENSG00000179862") ## All 3 CITEDs
 cited <- t(s[CID,])
 cited <- as.data.frame(cited)
 
 ##Merge expression data with clin data
+
 cited$p_id <- substr(row.names(cited), 1, 12)
 cited <- cited[order(row.names(cited)),]
 cited <- cited %>% distinct(p_id, .keep_all = TRUE) ## Remove duplicates
@@ -285,6 +287,7 @@ mc <- merge(cited, clin, by="p_id")
 
 
 ## Log2 TPM expression values for CITED1
+
 mc$CITED1 <- mc$ENSG00000125931.11
 
 
@@ -393,6 +396,7 @@ plot.survival <- function(s, grp, lty=1, title="", save="", cex=0.7, risk.table=
   # Risk Table
   #
   #########################
+  
   if (isTRUE(risk.table)) {
     times = x.axis.ticks
     sum.survfit = summary(fit, times=times)
@@ -422,6 +426,7 @@ plot.survival <- function(s, grp, lty=1, title="", save="", cex=0.7, risk.table=
 
 
 ## function for CITED1 expression groups:
+
 expr2 <- function(x){
     x$CITED1expr <- ifelse(ntile(x$CITED1, 2)==2, "CITED1 high", ifelse(ntile(x$CITED1, 2)==1,  "CITED1 low",  "NA"))
   x$CITED1expr <- factor(x$CITED1expr, levels=c("CITED1 high",  "CITED1 low"))
@@ -431,15 +436,10 @@ expr2 <- function(x){
 
 ### TCGA KM plots
 
-pdf("RelativeCITED1_survivalTCGA221111.pdf")
-par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
-    mar=c(4, 4, 4, 2),
-    xpd=NA
-)
-
 ## Figure 2 c
 ## Endo-treated ER+/LN-
 ## RFS
+
 x <- subset(mc, !is.na(mc$PFS_years) &  mc$Endo==1 & mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
 x <- expr2(x)
 plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; RFS: AE-treated tumours ER+/LN-: CITED1",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
@@ -448,6 +448,7 @@ plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr
 ## Figure 2 d
 ## AI-treated/ER+/LN-
 ## RFS
+
 x <- subset(mc, !is.na(mc$PFS_years) & mc$AI==1& mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
 x <- expr2(x)
 plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; RFS:AI-treated tumours ER+/LN-: CITED1",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
@@ -456,6 +457,7 @@ plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr
 ## Supplemental figure e
 ## Tam-treated
 ## RFS
+
 x <- subset(mc, !is.na(mc$PFS_years) & mc$Tamoxifen==1)
 x <- expr2(x)
 plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; Tam-treated: Gene CITED1 ",yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
@@ -463,11 +465,12 @@ plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr
 ## Supplemental figure f
 ## Tam ER+/LN-
 ## RFS
+
 x <- subset(mc, !is.na(mc$PFS_years) &  mc$Tamoxifen==1 & mc$er_status_by_ihc== "Positive" & (mc$ajcc_pathologic_n=="N0" | mc$ajcc_pathologic_n=="N0 (i-)"))
 x <- expr2(x)
 plot.survival(Surv(as.numeric(x$PFS_years), x$PFS_event), as.factor(x$CITED1expr), title="TCGA; Tam-treated ER+/LN-: Gene CITED1", yaxislabel= "Cumulative relapse-free survival", risk.table=T, lty=12)
 
-dev.off()
+
 
 
 ##############################################
@@ -617,57 +620,31 @@ plot.survival <- function(s, grp, lty=1, title="", save="", cex=0.7, risk.table=
 ##### FIGURES #####
 
 ### Figure 2a: TAM, ER+, RFS
-pdf("CITED1Figure2a_221111.pdf", family="ArialMT")
-par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
-    mar=c(4, 4, 4, 2),
-    xpd=NA
-)
 
 x <- subset(df, !is.na(df$RFS_years) & df$RFS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$typeendo==1)
 plot.survival(Surv(x$RFS_years, x$RFS_event), as.factor(x$CITED1_ScoreGroup), title="Tamoxifen-treated, ER-positive tumors
 RFS",yaxislabel= "Cumulative freedom from relapse", risk.table=T, lty=12)
 
-dev.off()
 
 
 ### Figure 2b: TAM, ER+, BCSS
-pdf("CITED1Figure2b_221111.pdf", family="ArialMT")
-par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
-    mar=c(4, 4, 4, 2),
-    #par(oma=c(2.5, 2, 1, 1),  # outer margins
-    xpd=NA
-)
 
 x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$typeendo==1)
 plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Tamoxifen-treated, ER-positive tumors
 BCSS",yaxislabel= "Cumulative survival", risk.table=T, lty=12)
 
-dev.off()
-
 
 ### Supplemental figure 1c
-pdf("CITED1SuppFigure1c_221111.pdf", family="ArialMT")
-par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
-    mar=c(4, 4, 4, 2),
-    #par(oma=c(2.5, 2, 1, 1),  # outer margins
-    xpd=NA
-)
+
 x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$endothe == 0)
 plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Untreated tumors (no tamoxifen)
 BCSS", yaxislabel= "Cumulative survival", risk.table=T, lty=12)
-dev.off()
 
 
 ### Supplemental figure 1d
-pdf("CITED1SuppFigure1d_221111.pdf", family="ArialMT")
-par(oma=c(6, 4, 2, 2),  # outer margins (bottom left top right)
-    mar=c(4, 4, 4, 2),
-    #par(oma=c(2.5, 2, 1, 1),  # outer margins
-    xpd=NA
-)
+
 x <- subset(df, !is.na(df$OS_years) & df$OS_years >= 0 & df$PrimaryCa==1 & df$ERstatus==1 & df$nodstat2==0 & df$typeendo==1)
 plot.survival(Surv(as.numeric(x$OS_years), x$BCS_event), as.factor(x$CITED1_ScoreGroup), title="Untreated tumors (no tamoxifen)
 BCSS", yaxislabel= "Cumulative survival", risk.table=T, lty=12)
-dev.off()
 
 
